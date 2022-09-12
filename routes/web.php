@@ -19,7 +19,7 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::controller(SampleController::class)->group(function(){
+Route::controller(SampleController::class)->group(function () {
 
     Route::get('login', 'index')->name('login');
 
@@ -32,5 +32,9 @@ Route::controller(SampleController::class)->group(function(){
     Route::post('validate_login', 'validate_login')->name('sample.validate_login');
 
     Route::get('dashboard', 'dashboard')->name('dashboard');
+
+    Route::get('profile', 'profile')->name('profile');
+
+    Route::post('profile_validation', 'profile_validation')->name('sample.profile_validation');
 
 });;
