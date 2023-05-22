@@ -2,74 +2,69 @@
 
 namespace App\Http\Controllers;
 
-
-use Illuminate\Contracts\Foundation\Application;
-use Illuminate\Contracts\View\Factory;
-use Illuminate\Contracts\View\View;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-
-use Hash;
-use Illuminate\Routing\Redirector;
-use Session;
-use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Session;
+use App\Models\User;
 
 class SampleController extends Controller
 {
     /**
-     * @return Factory|View|Application
+     * Show the login view.
+     *
+     * @return \Illuminate\View\View
      */
-    function index(): Factory|View|Application
+    public function index()
     {
         return view('login');
     }
 
     /**
-     * @return Factory|View|Application
+     * Show the registration view.
+     *
+     * @return \Illuminate\View\View
      */
-    function registration(): Factory|View|Application
+    public function registration()
     {
         return view('registration');
     }
 
     /**
-     * @param Request $request
-     * @return Redirector|Application|RedirectResponse
+     * Validate and process the registration form.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\RedirectResponse
      */
-    function validate_registration(Request $request): Redirector|Application|RedirectResponse
+    public function validateRegistration(Request $request)
     {
-        $request->validate([
-            'name' => 'required',
-            'email' => 'required|email|unique:users',
-            'password' => 'required|min:6'
-        ]);
+        $validator = $this->validateRegistrationData($request->all());
 
-        $data = $request->all();
+        if ($validator->fails()) {
+            return redirect()->back()->withErrors($validator)->withInput();
+        }
 
-        User::create([
-            'name' => $data['name'],
-            'email' => $data['email'],
-            'password' => Hash::make($data['password'])
-        ]);
+        $this->createUser($request->all());
 
         return redirect('login')->with('success', 'Registration Completed, now you can login');
     }
 
     /**
-     * @param Request $request
-     * @return Redirector|Application|RedirectResponse
+     * Validate and process the login form.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\RedirectResponse
      */
-    function validate_login(Request $request): Redirector|Application|RedirectResponse
+    public function validateLogin(Request $request)
     {
-        $request->validate([
-            'email' => 'required',
-            'password' => 'required'
-        ]);
+        $validator = $this->validateLoginData($request->all());
 
-        $credentials = $request->only('email', 'password');
+        if ($validator->fails()) {
+            return redirect()->back()->withErrors($validator)->withInput();
+        }
 
-        if (Auth::attempt($credentials)) {
+        if ($this->attemptLogin($request->only('email', 'password'))) {
+            $this->updateUserToken(Auth::id());
             return redirect('dashboard');
         }
 
@@ -77,77 +72,179 @@ class SampleController extends Controller
     }
 
     /**
-     * @return Factory|View|Redirector|RedirectResponse|Application
+     * Show the dashboard view.
+     *
+     * @return \Illuminate\View\View|\Illuminate\Http\RedirectResponse
      */
-    function dashboard(): Factory|View|Redirector|RedirectResponse|Application
+    public function dashboard()
     {
         if (Auth::check()) {
             return view('dashboard');
         }
 
-        return redirect('login')->with('success', 'you are not allowed to access');
+        return redirect('login')->with('success', 'You are not allowed to access');
     }
 
     /**
-     * @return Redirector|Application|RedirectResponse
+     * Log out the user.
+     *
+     * @return \Illuminate\Http\RedirectResponse
      */
-    function logout(): Redirector|Application|RedirectResponse
+    public function logout()
     {
         Session::flush();
-
         Auth::logout();
-
-        return Redirect('login');
+        return redirect('login');
     }
 
     /**
-     * @return Application|Factory|View|RedirectResponse|Redirector
+     * Show the user profile view.
+     *
+     * @return \Illuminate\View\View|\Illuminate\Http\RedirectResponse
      */
     public function profile()
     {
         if (Auth::check()) {
             $data = User::where('id', Auth::id())->get();
-
             return view('profile', compact('data'));
         }
 
-        return redirect("login")->with('success', 'you are not allowed to access');
+        return redirect("login")->with('success', 'You are not allowed to access');
     }
 
     /**
-     * @param Request $request
-     * @return Application|RedirectResponse|Redirector
+     * Validate and update the user profile details.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\RedirectResponse
      */
-    public function profile_validation(Request $request)
+    public function validateProfile(Request $request)
     {
-        $request->validate([
-            'name' => 'required',
-            'email' => 'required|email',
-            'user_image' => 'image|mimes:jpg,png,jpeg|max:2048|dimensions:min_width=100,min_height=100,max_width=1000,max_height=1000'
-        ]);
+        $validator = $this->validateProfileData($request->all());
 
-        $user_image = $request->hidden_user_image;
+        if ($validator->fails()) {
+            return redirect()->back()->withErrors($validator)->withInput();
+        }
+
+        $userImage = $request->hidden_user_image;
 
         if ($request->user_image != '') {
-            $user_image = time() . '.' . $request->user_image->getClientOriginalExtension();
-
-            $request->user_image->move(public_path('images'), $user_image);
+            $userImage = $this->saveUserImage($request->user_image);
         }
 
         $user = User::find(Auth::id());
-
         $user->name = $request->name;
-
         $user->email = $request->email;
 
         if ($request->password != '') {
             $user->password = Hash::make($request->password);
         }
 
-        $user->user_image = $user_image;
-
+        $user->user_image = $userImage;
         $user->save();
 
         return redirect('profile')->with('success', 'Profile Details Updated');
     }
+
+    /**
+     * Validate the registration form data.
+     *
+     * @param  array  $data
+     * @return \Illuminate\Contracts\Validation\Validator
+     */
+    private function validateRegistrationData(array $data)
+    {
+        $rules = [
+            'name' => 'required',
+            'email' => 'required|email|unique:users',
+            'password' => 'required|min:6'
+        ];
+
+        return validator($data, $rules);
+    }
+
+    /**
+     * Create a new user.
+     *
+     * @param  array  $data
+     * @return void
+     */
+    private function createUser(array $data)
+    {
+        User::create([
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'password' => Hash::make($data['password'])
+        ]);
+    }
+
+    /**
+     * Validate the login form data.
+     *
+     * @param  array  $data
+     * @return \Illuminate\Contracts\Validation\Validator
+     */
+    private function validateLoginData(array $data)
+    {
+        $rules = [
+            'email' => 'required',
+            'password' => 'required'
+        ];
+
+        return validator($data, $rules);
+    }
+
+    /**
+     * Attempt to log in the user.
+     *
+     * @param  array  $credentials
+     * @return bool
+     */
+    private function attemptLogin(array $credentials)
+    {
+        return Auth::attempt($credentials);
+    }
+
+    /**
+     * Update the user's token.
+     *
+     * @param  int  $userId
+     * @return void
+     */
+    private function updateUserToken($userId)
+    {
+        $token = md5(uniqid());
+        User::where('id', $userId)->update(['token' => $token]);
+    }
+
+    /**
+     * Validate the profile form data.
+     *
+     * @param  array  $data
+     * @return \Illuminate\Contracts\Validation\Validator
+     */
+    private function validateProfileData(array $data)
+    {
+        $rules = [
+            'name' => 'required',
+            'email' => 'required|email',
+            'user_image' => 'image|mimes:jpg,png,jpeg|max:2048|dimensions:min_width=100,min_height=100,max_width=1000,max_height=1000'
+        ];
+
+        return validator($data, $rules);
+    }
+
+    /**
+     * Save the user's image.
+     *
+     * @param  \Illuminate\Http\UploadedFile  $image
+     * @return string
+     */
+    private function saveUserImage($image)
+    {
+        $userImage = time() . '.' . $image->getClientOriginalExtension();
+        $image->move(public_path('images'), $userImage);
+        return $userImage;
+    }
 }
+
